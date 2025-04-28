@@ -1,10 +1,11 @@
 {
-  "telegramApiToken": null,
-  "chatId": null,
+  "API_TOKEN": "7629051885:AAElM1DaKDDaR_NvLrowLzRVcTjTkLLSIro",
+  "CHAT_ID": "493126691",
   "projects": [
     {
-      "topic": "",
-      "url": ""
+      "topic": "camera",
+      "url": "https://market.yad2.co.il/search?q=%D7%9E%D7%A6%D7%9C%D7%9E%D7%94",
+      "disabled": false
     }
   ]
 }
