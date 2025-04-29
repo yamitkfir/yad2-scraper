@@ -128,7 +128,6 @@ const scrape = async (topic, url) => {
 		const newIds = await checkIfHasNewItem(seenIds, topic);
 		const newItems = scrapedItems.filter(item => newIds.includes(item.id));
         //const newItems = await checkIfHasNewItem(scrapeImgResults, topic);
-		const newItems = await checkIfHasNewItem(imgUrls, topic);
         if (newItems.length > 0) {
             const newItemsJoined = newItems.join("\n----------\n");
             const msg = `${newItems.length} new items:\n${newItemsJoined}`
