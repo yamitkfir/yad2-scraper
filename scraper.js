@@ -95,6 +95,7 @@ const scrape = async (topic, url) => {
     const telenode = new Telenode({apiToken})
     try {
         const scrapedItems = await scrapeItemsAndExtractImgUrls(url);
+		console.log(`Scraped ${scrapedItems.length} items`);
         const ids = scrapedItems.map(item => item.id);
         const newIds = await checkIfHasNewItem(ids, topic);
         const newItems = scrapedItems.filter(item => newIds.includes(item.id));
@@ -103,7 +104,7 @@ const scrape = async (topic, url) => {
             const msg = `${newItems.length} new items:\n${newItemsJoined}`;
             await telenode.sendTextMessage(msg, chatId);
         } else {
-            //await telenode.sendTextMessage("No new items were added", chatId);
+            await telenode.sendTextMessage("No new items were added", chatId);
         }
     } catch (e) {
         let errMsg = e?.message || "";
