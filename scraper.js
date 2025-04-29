@@ -16,72 +16,45 @@ const getYad2Response = async (url) => {
     }
 }
 
-/*
 const scrapeItemsAndExtractImgUrls = async (url) => {
     const yad2Html = await getYad2Response(url);
     if (!yad2Html) {
         throw new Error("Could not get Yad2 response");
     }
+
     const $ = cheerio.load(yad2Html);
-    const title = $("title")
-    const titleText = title.first().text();
+    const titleText = $("title").first().text();
     if (titleText === "ShieldSquare Captcha") {
         throw new Error("Bot detection");
     }
-    const $feedItems = $(".feeditem").find(".pic");
-    if (!$feedItems) {
-        throw new Error("Could not find feed items");
-    }
-    const imageUrls = []
-    $feedItems.each((_, elm) => {
-        const imgSrc = $(elm).find("img").attr('src');
-        if (imgSrc) {
-            imageUrls.push(imgSrc)
-        }
-    })
-    return imageUrls;
-}*/
-const scrapeItemsAndExtractImgUrls = async (url) => {
-  const yad2Html = await getYad2Response(url);
-  if (!yad2Html) {
-    throw new Error("Could not get Yad2 response");
-  }
 
-  const $ = cheerio.load(yad2Html);
-  const titleText = $("title").first().text();
-  if (titleText === "ShieldSquare Captcha") {
-    throw new Error("Bot detection");
-  }
+    const itemElements = $(".feeditem");
+    const items = [];
 
-  const itemElements = $(".feeditem");
-  const items = [];
+    itemElements.each((_, el) => {
+        const id = $(el).attr("post-id") || $(el).attr("id");
+        const title = $(el).find(".title").text().trim();
+        const price = $(el).find(".price").text().trim();
+        const img = $(el).find("img").attr("src") || "";
+        const link = $(el).find("a").attr("href") || "";
 
-  itemElements.each((_, el) => {
-    const id = $(el).attr("post-id") || $(el).attr("id");
-    const title = $(el).find(".title").text().trim();
-    const price = $(el).find(".price").text().trim();
-    const img = $(el).find("img").attr("src") || "";
-    const link = $(el).find("a").attr("href") || "";
-
-    items.push({
-      id: id || title + price, // fallback unique ID
-      title,
-      price,
-      img,
-      link
+        items.push({
+            id: id || title + price,
+            title,
+            price,
+            img,
+            link
+        });
     });
-  });
 
-  return items;
+    return items;
 };
 
-
-
-const checkIfHasNewItem = async (imgUrls, topic) => {
+const checkIfHasNewItem = async (ids, topic) => {
     const filePath = `./data/${topic}.json`;
-    let savedUrls = [];
+    let savedIds = [];
     try {
-        savedUrls = require(filePath);
+        savedIds = require(filePath);
     } catch (e) {
         if (e.code === "MODULE_NOT_FOUND") {
             fs.mkdirSync('data');
@@ -92,21 +65,21 @@ const checkIfHasNewItem = async (imgUrls, topic) => {
         }
     }
     let shouldUpdateFile = false;
-    savedUrls = savedUrls.filter(savedUrl => {
+    savedIds = savedIds.filter(savedId => {
         shouldUpdateFile = true;
-        return imgUrls.includes(savedUrl);
+        return ids.includes(savedId);
     });
     const newItems = [];
-    imgUrls.forEach(url => {
-        if (!savedUrls.includes(url)) {
-            savedUrls.push(url);
-            newItems.push(url);
+    ids.forEach(id => {
+        if (!savedIds.includes(id)) {
+            savedIds.push(id);
+            newItems.push(id);
             shouldUpdateFile = true;
         }
     });
     if (shouldUpdateFile) {
-        const updatedUrls = JSON.stringify(savedUrls, null, 2);
-        fs.writeFileSync(filePath, updatedUrls);
+        const updatedIds = JSON.stringify(savedIds, null, 2);
+        fs.writeFileSync(filePath, updatedIds);
         await createPushFlagForWorkflow();
     }
     return newItems;
@@ -121,16 +94,13 @@ const scrape = async (topic, url) => {
     const chatId = process.env.CHAT_ID || config.chatId;
     const telenode = new Telenode({apiToken})
     try {
-        //await telenode.sendTextMessage(`Starting scanning ${topic} on link:\n${url}`, chatId)
-        //const scrapeImgResults = await scrapeItemsAndExtractImgUrls(url);
-		const scrapedItems = await scrapeItemsAndExtractImgUrls(url);
-		const seenIds = scrapedItems.map(item => item.id);
-		const newIds = await checkIfHasNewItem(seenIds, topic);
-		const newItems = scrapedItems.filter(item => newIds.includes(item.id));
-        //const newItems = await checkIfHasNewItem(scrapeImgResults, topic);
+        const scrapedItems = await scrapeItemsAndExtractImgUrls(url);
+        const ids = scrapedItems.map(item => item.id);
+        const newIds = await checkIfHasNewItem(ids, topic);
+        const newItems = scrapedItems.filter(item => newIds.includes(item.id));
         if (newItems.length > 0) {
             const newItemsJoined = newItems.join("\n----------\n");
-            const msg = `${newItems.length} new items:\n${newItemsJoined}`
+            const msg = `${newItems.length} new items:\n${newItemsJoined}`;
             await telenode.sendTextMessage(msg, chatId);
         } else {
             //await telenode.sendTextMessage("No new items were added", chatId);
