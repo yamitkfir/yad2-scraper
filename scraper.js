@@ -7,277 +7,254 @@ const getYad2Response = async (url) => {
     const requestOptions = {
         method: 'GET',
         headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9,he;q=0.8',
-            'Cache-Control': 'no-cache'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36'
         },
         redirect: 'follow'
     };
-    
     try {
-        console.log(`Fetching URL: ${url}`);
-        const res = await fetch(url, requestOptions);
-        console.log(`Response status: ${res.status}`);
-        
-        if (!res.ok) {
-            throw new Error(`HTTP error! Status: ${res.status}`);
-        }
-        
-        return await res.text();
+        const res = await fetch(url, requestOptions)
+        return await res.text()
     } catch (err) {
-        console.error('Error fetching URL:', err);
-        throw err;
+        console.log(err)
     }
 }
 
 const scrapeItemsAndExtractImgUrls = async (url) => {
-    console.log('Starting scraping process...');
+    const yad2Html = await getYad2Response(url);
+    if (!yad2Html) {
+        throw new Error("Could not get Yad2 response");
+    }
+
+    // For debugging
+    fs.writeFileSync('last_response.html', yad2Html);
     
-    try {
-        const yad2Html = await getYad2Response(url);
-        
-        if (!yad2Html) {
-            throw new Error("Empty response from Yad2");
-        }
-        
-        // Save HTML for debugging
-        fs.writeFileSync('last_response.html', yad2Html);
-        console.log('Saved response HTML to last_response.html for debugging');
-
-        const $ = cheerio.load(yad2Html);
-        const titleText = $("title").first().text();
-        console.log(`Page title: "${titleText}"`);
-        
-        if (titleText === "ShieldSquare Captcha") {
-            throw new Error("Bot detection triggered");
-        }
-        
-        // Try different selectors based on Yad2's current structure
-        // Option 1: Original selectors
-        let itemElements = $(".feeditem");
-        
-        // Option 2: Try alternative selectors if no items found
-        if (itemElements.length === 0) {
-            console.log('No items found with .feeditem selector, trying alternative selectors...');
-            itemElements = $("[data-testid='item']");
-        }
-        
-        // Option 3: Another alternative
-        if (itemElements.length === 0) {
-            console.log('Trying another selector pattern...');
-            itemElements = $(".feed_item");
-        }
-        
-        console.log(`Found ${itemElements.length} item elements on the page`);
-        
-        const items = [];
-
-        itemElements.each((i, el) => {
-            try {
-                const $el = $(el);
-                const id = $el.attr("post-id") || $el.attr("id") || $el.attr("data-id");
-                
-                // Try different selector patterns for title
-                let title = $el.find(".title").text().trim();
-                if (!title) title = $el.find("[data-testid='item-title']").text().trim();
-                if (!title) title = $el.find("h3").text().trim();
-                
-                // Try different selector patterns for price
-                let price = $el.find(".price").text().trim();
-                if (!price) price = $el.find("[data-testid='item-price']").text().trim();
-                if (!price) price = $el.find(".PriceRow_price__JXzgL").text().trim();
-                
-                // Try different selector patterns for image
-                let img = $el.find("img").attr("src") || "";
-                if (!img) img = $el.find("[data-testid='item-image']").attr("src") || "";
-                
-                // Try different selector patterns for link
-                let link = $el.find("a").attr("href") || "";
-                if (!link) link = $el.attr("data-href") || "";
-                if (!link && $el.parent().is("a")) link = $el.parent().attr("href") || "";
-                
-                if (link && !link.startsWith("http")) {
-                    link = `https://market.yad2.co.il${link}`;
-                }
-                
-                const itemId = id || `${title}_${price}`.replace(/\s+/g, '_');
-                
-                console.log(`Item ${i+1}: ID=${itemId}, Title=${title}, Price=${price}`);
-                
+    const $ = cheerio.load(yad2Html);
+    const titleText = $("title").first().text();
+    if (titleText === "ShieldSquare Captcha") {
+        throw new Error("Bot detection");
+    }
+    
+    console.log(`Page title: "${titleText}"`);
+    
+    // Shopify product cards based on the HTML structure
+    const items = [];
+    
+    // Target the product cards
+    const productCards = $('a[class*="card_card"]');
+    console.log(`Found ${productCards.length} product cards`);
+    
+    productCards.each((index, card) => {
+        try {
+            const $card = $(card);
+            
+            // Get product ID from href attribute
+            const href = $card.attr('href') || '';
+            const productId = href.split('?')[0].split('/').pop() || `product_${index}`;
+            
+            // Get product title
+            const title = $card.find('[class*="product-title"]').text().trim() || 
+                          $card.find('h3').text().trim();
+            
+            // Get product price
+            const price = $card.find('[class*="price"]').text().trim();
+            
+            // Get product image
+            const img = $card.find('img').attr('src') || '';
+            
+            // Build link
+            const link = href.startsWith('http') ? 
+                        href : 
+                        `https://market.yad2.co.il${href}`;
+            
+            // Add to items if we have at least a title or price
+            if (title || price) {
                 items.push({
-                    id: itemId,
+                    id: productId,
                     title,
                     price,
                     img,
                     link
                 });
-            } catch (err) {
-                console.error(`Error processing item ${i+1}:`, err);
+            }
+        } catch (error) {
+            console.log(`Error processing card ${index}: ${error.message}`);
+        }
+    });
+    
+    // If no products found with the card class, try another approach
+    if (items.length === 0) {
+        // Try looking for product preview elements
+        const productElements = $('.product-preview');
+        console.log(`Found ${productElements.length} product preview elements`);
+        
+        productElements.each((index, element) => {
+            try {
+                const $element = $(element);
+                
+                const linkElement = $element.find('a').first();
+                const href = linkElement.attr('href') || '';
+                const productId = href.split('?')[0].split('/').pop() || `product_${index}`;
+                
+                const title = $element.find('h3, .product-title, [class*="title"]').first().text().trim();
+                const price = $element.find('.price, [class*="price"]').first().text().trim();
+                const img = $element.find('img').attr('src') || '';
+                
+                const link = href.startsWith('http') ? 
+                            href : 
+                            `https://market.yad2.co.il${href}`;
+                
+                if (title || price) {
+                    items.push({
+                        id: productId,
+                        title,
+                        price,
+                        img,
+                        link
+                    });
+                }
+            } catch (error) {
+                console.log(`Error processing element ${index}: ${error.message}`);
             }
         });
-
-        return items;
-    } catch (err) {
-        console.error('Error in scraping function:', err);
-        throw err;
     }
+    
+    // Try one more approach if still no items
+    if (items.length === 0) {
+        // Look for any divs or items that might contain product info
+        $('div').each((index, div) => {
+            const $div = $(div);
+            const classes = $div.attr('class') || '';
+            
+            // Only process divs that might be product containers
+            if (classes.includes('product') || classes.includes('item') || classes.includes('card')) {
+                try {
+                    const linkElement = $div.find('a').first();
+                    const href = linkElement.attr('href') || '';
+                    
+                    // Skip if not a product link
+                    if (!href || (!href.includes('/products/') && !href.includes('product'))) {
+                        return;
+                    }
+                    
+                    const productId = href.split('?')[0].split('/').pop() || `product_${index}`;
+                    
+                    const title = $div.find('h3, .product-title, [class*="title"]').first().text().trim();
+                    const price = $div.find('.price, [class*="price"]').first().text().trim();
+                    const img = $div.find('img').attr('src') || '';
+                    
+                    const link = href.startsWith('http') ? 
+                                href : 
+                                `https://market.yad2.co.il${href}`;
+                    
+                    if ((title || price) && !items.some(item => item.id === productId)) {
+                        items.push({
+                            id: productId,
+                            title,
+                            price,
+                            img,
+                            link
+                        });
+                    }
+                } catch (error) {
+                    // Silently ignore errors for this generic approach
+                }
+            }
+        });
+    }
+    
+    console.log(`Total scraped items: ${items.length}`);
+    
+    return items;
 };
 
 const checkIfHasNewItem = async (ids, topic) => {
-    console.log(`Checking for new items for topic: ${topic}`);
-    console.log(`Received IDs: ${JSON.stringify(ids)}`);
-    
     const filePath = `./data/${topic}.json`;
     let savedIds = [];
-    
     try {
         if (!fs.existsSync('./data')) {
-            console.log('Creating data directory...');
             fs.mkdirSync('./data', { recursive: true });
         }
         
         if (fs.existsSync(filePath)) {
             const fileContent = fs.readFileSync(filePath, 'utf8');
             savedIds = JSON.parse(fileContent);
-            console.log(`Loaded ${savedIds.length} saved IDs from ${filePath}`);
         } else {
-            console.log(`File ${filePath} doesn't exist, will create it`);
             fs.writeFileSync(filePath, '[]');
         }
     } catch (e) {
-        console.error(`Error reading/creating ${filePath}:`, e);
-        // Initialize as empty if there was an error
-        savedIds = [];
-        fs.writeFileSync(filePath, '[]');
-    }
-    
-    let shouldUpdateFile = false;
-    const filteredIds = savedIds.filter(savedId => {
-        const exists = ids.includes(savedId);
-        if (!exists) {
-            shouldUpdateFile = true;
-            console.log(`ID ${savedId} no longer exists in current results`);
+        if (e.code === "MODULE_NOT_FOUND") {
+            fs.mkdirSync('data', { recursive: true });
+            fs.writeFileSync(filePath, '[]');
+        } else {
+            console.log(e);
+            throw new Error(`Could not read / create ${filePath}`);
         }
+    }
+    let shouldUpdateFile = false;
+    savedIds = savedIds.filter(savedId => {
+        const exists = ids.includes(savedId);
+        if (!exists) shouldUpdateFile = true;
         return exists;
     });
-    
     const newItems = [];
     ids.forEach(id => {
         if (!savedIds.includes(id)) {
-            filteredIds.push(id);
+            savedIds.push(id);
             newItems.push(id);
             shouldUpdateFile = true;
-            console.log(`Found new item with ID: ${id}`);
         }
     });
-    
     if (shouldUpdateFile) {
-        console.log(`Updating ${filePath} with ${filteredIds.length} IDs`);
-        const updatedIds = JSON.stringify(filteredIds, null, 2);
+        const updatedIds = JSON.stringify(savedIds, null, 2);
         fs.writeFileSync(filePath, updatedIds);
         await createPushFlagForWorkflow();
-    } else {
-        console.log('No changes detected, file not updated');
     }
-    
     return newItems;
 }
 
 const createPushFlagForWorkflow = () => {
-    console.log('Creating push flag for GitHub workflow');
-    fs.writeFileSync("push_me", "");
-}
-
-const formatItemForTelegram = (item) => {
-    return `🔍 Title: ${item.title}
-💰 Price: ${item.price}
-🔗 Link: ${item.link}
-${item.img ? '📷 Image: ' + item.img : ''}`;
+    fs.writeFileSync("push_me", "")
 }
 
 const scrape = async (topic, url) => {
-    console.log(`\n=== Starting scrape for topic: ${topic} ===`);
-    console.log(`URL: ${url}`);
-    
     const apiToken = process.env.API_TOKEN || config.API_TOKEN;
     const chatId = process.env.CHAT_ID || config.CHAT_ID;
-    
-    if (!apiToken) {
-        throw new Error("Telegram API token not found in environment or config");
-    }
-    
-    if (!chatId) {
-        throw new Error("Telegram chat ID not found in environment or config");
-    }
-    
-    console.log(`Using Telegram API token: ${apiToken.substring(0, 5)}...`);
-    console.log(`Using chat ID: ${chatId}`);
-    
-    const telenode = new Telenode({apiToken});
-    
+    const telenode = new Telenode({apiToken})
     try {
         const scrapedItems = await scrapeItemsAndExtractImgUrls(url);
         console.log(`Scraped ${scrapedItems.length} items`);
-        
         const ids = scrapedItems.map(item => item.id);
         const newIds = await checkIfHasNewItem(ids, topic);
         const newItems = scrapedItems.filter(item => newIds.includes(item.id));
-        
-        console.log(`Found ${newItems.length} new items`);
-        
         if (newItems.length > 0) {
-            // Send items one by one for better readability in Telegram
-            for (const item of newItems) {
-                const formattedItem = formatItemForTelegram(item);
-                await telenode.sendTextMessage(formattedItem, chatId);
-                // Small delay to avoid rate limiting
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
+            const newItemsJoined = newItems.map(item => 
+                `כותרת: ${item.title}\nמחיר: ${item.price}\nקישור: ${item.link}`
+            ).join("\n----------\n");
             
-            await telenode.sendTextMessage(`✅ Found ${newItems.length} new camera listings!`, chatId);
+            const msg = `נמצאו ${newItems.length} פריטים חדשים:\n${newItemsJoined}`;
+            await telenode.sendTextMessage(msg, chatId);
         } else {
-            await telenode.sendTextMessage("🔍 No new camera listings found", chatId);
+            await telenode.sendTextMessage("לא נמצאו פריטים חדשים", chatId);
         }
     } catch (e) {
-        console.error('Error in scrape function:', e);
-        let errMsg = e?.message || "Unknown error";
-        await telenode.sendTextMessage(`❌ Scan failed:\n${errMsg}`, chatId);
-        throw e;
+        let errMsg = e?.message || "";
+        if (errMsg) {
+            errMsg = `שגיאה: ${errMsg}`
+        }
+        await telenode.sendTextMessage(`סריקה נכשלה... 😥\n${errMsg}`, chatId)
+        throw new Error(e)
     }
 }
 
 const program = async () => {
-    console.log('Starting Yad2 scraper...');
-    console.log(`Date and time: ${new Date().toISOString()}`);
-    
-    try {
-        await Promise.all(config.projects.filter(project => {
-            if (project.disabled) {
-                console.log(`Topic "${project.topic}" is disabled. Skipping.`);
-            }
-            return !project.disabled;
-        }).map(async project => {
-            await scrape(project.topic, project.url);
-        }));
-        
-        console.log('Scraping completed successfully');
-    } catch (error) {
-        console.error('Error in main program:', error);
-        process.exit(1);
-    }
+    await Promise.all(config.projects.filter(project => {
+        if (project.disabled) {
+            console.log(`Topic "${project.topic}" is disabled. Skipping.`);
+        }
+        return !project.disabled;
+    }).map(async project => {
+        await scrape(project.topic, project.url)
+    }))
 };
 
-// If this file is run directly
-if (require.main === module) {
-    program();
-}
-
-// Export functions for testing
-module.exports = {
-    getYad2Response,
-    scrapeItemsAndExtractImgUrls,
-    checkIfHasNewItem,
-    scrape,
-    program
-};
+program();
