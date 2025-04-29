@@ -41,28 +41,40 @@ const scrapeItemsAndExtractImgUrls = async (url) => {
     })
     return imageUrls;
 }*/
-const scrapeItemsAndExtractImgUrls = async (page) => {
-  const items = await page.evaluate(() => {
-    const itemElements = Array.from(document.querySelectorAll('.feeditem'));
-    return itemElements.map((el) => {
-      const id = el.getAttribute('post-id') || el.getAttribute('id');
-      const title = el.querySelector('.title')?.innerText || '';
-      const price = el.querySelector('.price')?.innerText || '';
-      const img = el.querySelector('img')?.src || '';
-      const link = el.querySelector('a')?.href || '';
+const scrapeItemsAndExtractImgUrls = async (url) => {
+  const yad2Html = await getYad2Response(url);
+  if (!yad2Html) {
+    throw new Error("Could not get Yad2 response");
+  }
 
-      return {
-        id: id || title + price, // fallback to something unique
-        title,
-        price,
-        img,
-        link
-      };
+  const $ = cheerio.load(yad2Html);
+  const titleText = $("title").first().text();
+  if (titleText === "ShieldSquare Captcha") {
+    throw new Error("Bot detection");
+  }
+
+  const itemElements = $(".feeditem");
+  const items = [];
+
+  itemElements.each((_, el) => {
+    const id = $(el).attr("post-id") || $(el).attr("id");
+    const title = $(el).find(".title").text().trim();
+    const price = $(el).find(".price").text().trim();
+    const img = $(el).find("img").attr("src") || "";
+    const link = $(el).find("a").attr("href") || "";
+
+    items.push({
+      id: id || title + price, // fallback unique ID
+      title,
+      price,
+      img,
+      link
     });
   });
 
   return items;
 };
+
 
 
 const checkIfHasNewItem = async (imgUrls, topic) => {
@@ -112,7 +124,9 @@ const scrape = async (topic, url) => {
         //await telenode.sendTextMessage(`Starting scanning ${topic} on link:\n${url}`, chatId)
         //const scrapeImgResults = await scrapeItemsAndExtractImgUrls(url);
 		const scrapedItems = await scrapeItemsAndExtractImgUrls(url);
-		const imgUrls = scrapedItems.map(item => item.id); // <-- use post IDs now
+		const seenIds = scrapedItems.map(item => item.id);
+		const newIds = await checkIfHasNewItem(seenIds, topic);
+		const newItems = scrapedItems.filter(item => newIds.includes(item.id));
         //const newItems = await checkIfHasNewItem(scrapeImgResults, topic);
 		const newItems = await checkIfHasNewItem(imgUrls, topic);
         if (newItems.length > 0) {
