@@ -7,15 +7,20 @@ const getYad2Response = async (url) => {
     const requestOptions = {
         method: 'GET',
         headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9,he;q=0.8',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Referer': 'https://market.yad2.co.il/'
         },
         redirect: 'follow'
     };
     try {
-        const res = await fetch(url, requestOptions)
-        return await res.text()
+        const res = await fetch(url, requestOptions);
+        return await res.text();
     } catch (err) {
-        console.log(err)
+        console.log(err);
     }
 }
 
@@ -36,76 +41,44 @@ const scrapeItemsAndExtractImgUrls = async (url) => {
     
     console.log(`Page title: "${titleText}"`);
     
-    // Shopify product cards based on the HTML structure
+    // Yad2 specific selectors
     const items = [];
     
-    // Target the product cards
-    const productCards = $('a[class*="card_card"]');
-    console.log(`Found ${productCards.length} product cards`);
+    // Try to find the main feed items
+    const feedItems = $(".feed_item, .feeditem, [data-test-id='feed-item'], li[item-id]");
+    console.log(`Found ${feedItems.length} feed items`);
     
-    productCards.each((index, card) => {
-        try {
-            const $card = $(card);
-            
-            // Get product ID from href attribute
-            const href = $card.attr('href') || '';
-            const productId = href.split('?')[0].split('/').pop() || `product_${index}`;
-            
-            // Get product title
-            const title = $card.find('[class*="product-title"]').text().trim() || 
-                          $card.find('h3').text().trim();
-            
-            // Get product price
-            const price = $card.find('[class*="price"]').text().trim();
-            
-            // Get product image
-            const img = $card.find('img').attr('src') || '';
-            
-            // Build link
-            const link = href.startsWith('http') ? 
-                        href : 
-                        `https://market.yad2.co.il${href}`;
-            
-            // Add to items if we have at least a title or price
-            if (title || price) {
-                items.push({
-                    id: productId,
-                    title,
-                    price,
-                    img,
-                    link
-                });
-            }
-        } catch (error) {
-            console.log(`Error processing card ${index}: ${error.message}`);
-        }
-    });
-    
-    // If no products found with the card class, try another approach
-    if (items.length === 0) {
-        // Try looking for product preview elements
-        const productElements = $('.product-preview');
-        console.log(`Found ${productElements.length} product preview elements`);
-        
-        productElements.each((index, element) => {
+    if (feedItems.length > 0) {
+        feedItems.each((index, el) => {
             try {
-                const $element = $(element);
+                const $el = $(el);
                 
-                const linkElement = $element.find('a').first();
-                const href = linkElement.attr('href') || '';
-                const productId = href.split('?')[0].split('/').pop() || `product_${index}`;
+                // Get ID from various possible attributes
+                const id = $el.attr('item-id') || $el.attr('data-item-id') || $el.attr('id') || 
+                          $el.attr('post-id') || `item_${index}`;
                 
-                const title = $element.find('h3, .product-title, [class*="title"]').first().text().trim();
-                const price = $element.find('.price, [class*="price"]').first().text().trim();
-                const img = $element.find('img').attr('src') || '';
+                // Try various selectors for title
+                const title = $el.find(".title, [data-test-id='item-title'], h3, .item-title").first().text().trim() ||
+                              $el.find("h2").first().text().trim();
                 
-                const link = href.startsWith('http') ? 
-                            href : 
-                            `https://market.yad2.co.il${href}`;
+                // Try various selectors for price
+                const price = $el.find(".price, [data-test-id='item-price'], .item-price").first().text().trim();
                 
-                if (title || price) {
+                // Try to find image
+                const img = $el.find("img").first().attr('src') || 
+                            $el.find("img").first().attr('data-src') || '';
+                
+                // Try to find link
+                let link = $el.find("a").first().attr('href') || '';
+                // Make sure link is absolute
+                if (link && !link.startsWith('http')) {
+                    link = `https://market.yad2.co.il${link.startsWith('/') ? '' : '/'}${link}`;
+                }
+                
+                // Add item if we have at least some info
+                if (id && (title || price)) {
                     items.push({
-                        id: productId,
+                        id,
                         title,
                         price,
                         img,
@@ -113,51 +86,96 @@ const scrapeItemsAndExtractImgUrls = async (url) => {
                     });
                 }
             } catch (error) {
-                console.log(`Error processing element ${index}: ${error.message}`);
+                console.log(`Error processing item ${index}: ${error.message}`);
             }
         });
     }
     
-    // Try one more approach if still no items
+    // If no items found, try a different approach with general product elements
     if (items.length === 0) {
-        // Look for any divs or items that might contain product info
-        $('div').each((index, div) => {
-            const $div = $(div);
-            const classes = $div.attr('class') || '';
-            
-            // Only process divs that might be product containers
-            if (classes.includes('product') || classes.includes('item') || classes.includes('card')) {
-                try {
-                    const linkElement = $div.find('a').first();
-                    const href = linkElement.attr('href') || '';
-                    
-                    // Skip if not a product link
-                    if (!href || (!href.includes('/products/') && !href.includes('product'))) {
-                        return;
-                    }
-                    
-                    const productId = href.split('?')[0].split('/').pop() || `product_${index}`;
-                    
-                    const title = $div.find('h3, .product-title, [class*="title"]').first().text().trim();
-                    const price = $div.find('.price, [class*="price"]').first().text().trim();
-                    const img = $div.find('img').attr('src') || '';
-                    
-                    const link = href.startsWith('http') ? 
-                                href : 
-                                `https://market.yad2.co.il${href}`;
-                    
-                    if ((title || price) && !items.some(item => item.id === productId)) {
-                        items.push({
-                            id: productId,
-                            title,
-                            price,
-                            img,
-                            link
-                        });
-                    }
-                } catch (error) {
-                    // Silently ignore errors for this generic approach
+        // Try to find any elements that might contain product information
+        // This is a more generic approach looking for common product listing patterns
+        const potentialItems = $('div[class*="item"], div[class*="product"], div[class*="card"]');
+        console.log(`Found ${potentialItems.length} potential items`);
+        
+        potentialItems.each((index, el) => {
+            try {
+                const $el = $(el);
+                
+                if ($el.find('a').length === 0) return; // Skip if no links
+                
+                const id = $el.attr('id') || $el.attr('data-id') || `generic_${index}`;
+                
+                // Look for text that might be a title
+                const title = $el.find('h2, h3, h4, [class*="title"], [class*="name"]').first().text().trim();
+                
+                // Look for text that might be a price
+                const price = $el.find('[class*="price"], [class*="cost"], strong').first().text().trim();
+                
+                // Find image
+                const img = $el.find('img').first().attr('src') || 
+                            $el.find('img').first().attr('data-src') || '';
+                
+                // Find link
+                let link = $el.find('a').first().attr('href') || '';
+                if (link && !link.startsWith('http')) {
+                    link = `https://market.yad2.co.il${link.startsWith('/') ? '' : '/'}${link}`;
                 }
+                
+                // Add if we have meaningful data
+                if (id && (title || price)) {
+                    items.push({
+                        id,
+                        title,
+                        price,
+                        img,
+                        link
+                    });
+                }
+            } catch (error) {
+                // Silently continue
+            }
+        });
+    }
+    
+    // Last resort - grab all the items
+    if (items.length === 0) {
+        console.log("Using last resort method - scanning all elements");
+        
+        // Extract specific Yad2 structure from script tags
+        const scriptTags = $('script:not([src])');
+        scriptTags.each((_, script) => {
+            try {
+                const scriptContent = $(script).html();
+                if (scriptContent && scriptContent.includes('window.__APOLLO_STATE__')) {
+                    // Extract JSON data from Apollo state
+                    const match = scriptContent.match(/window\.__APOLLO_STATE__\s*=\s*({.+});/);
+                    if (match && match[1]) {
+                        try {
+                            const apolloData = JSON.parse(match[1]);
+                            
+                            // Look for items in Apollo data
+                            Object.keys(apolloData).forEach(key => {
+                                if (apolloData[key] && apolloData[key].__typename === 'Item') {
+                                    const item = apolloData[key];
+                                    if (item.id) {
+                                        items.push({
+                                            id: item.id,
+                                            title: item.title || '',
+                                            price: item.price || '',
+                                            img: item.image_url || '',
+                                            link: item.url ? `https://market.yad2.co.il${item.url}` : ''
+                                        });
+                                    }
+                                }
+                            });
+                        } catch (e) {
+                            console.log("Error parsing Apollo data:", e.message);
+                        }
+                    }
+                }
+            } catch (e) {
+                // Continue to next script
             }
         });
     }
@@ -216,6 +234,14 @@ const createPushFlagForWorkflow = () => {
     fs.writeFileSync("push_me", "")
 }
 
+const formatItem = (item) => {
+    let formattedItem = '';
+    if (item.title) formattedItem += `כותרת: ${item.title}\n`;
+    if (item.price) formattedItem += `מחיר: ${item.price}\n`;
+    if (item.link) formattedItem += `קישור: ${item.link}\n`;
+    return formattedItem;
+}
+
 const scrape = async (topic, url) => {
     const apiToken = process.env.API_TOKEN || config.API_TOKEN;
     const chatId = process.env.CHAT_ID || config.CHAT_ID;
@@ -223,18 +249,28 @@ const scrape = async (topic, url) => {
     try {
         const scrapedItems = await scrapeItemsAndExtractImgUrls(url);
         console.log(`Scraped ${scrapedItems.length} items`);
+        
+        if (scrapedItems.length === 0) {
+            await telenode.sendTextMessage(`לא נמצאו פריטים בסריקה. אנא בדוק את קוד האתר שהשתנה.`, chatId);
+            return;
+        }
+        
         const ids = scrapedItems.map(item => item.id);
         const newIds = await checkIfHasNewItem(ids, topic);
         const newItems = scrapedItems.filter(item => newIds.includes(item.id));
+        
         if (newItems.length > 0) {
-            const newItemsJoined = newItems.map(item => 
-                `כותרת: ${item.title}\nמחיר: ${item.price}\nקישור: ${item.link}`
-            ).join("\n----------\n");
-            
-            const msg = `נמצאו ${newItems.length} פריטים חדשים:\n${newItemsJoined}`;
-            await telenode.sendTextMessage(msg, chatId);
+            // Split items into batches to avoid message length limits
+            const BATCH_SIZE = 5;
+            for (let i = 0; i < newItems.length; i += BATCH_SIZE) {
+                const batchItems = newItems.slice(i, i + BATCH_SIZE);
+                const newItemsJoined = batchItems.map(formatItem).join("\n----------\n");
+                
+                const msg = `נמצאו ${newItems.length} פריטים חדשים${newItems.length > BATCH_SIZE ? ` (מציג ${i+1}-${Math.min(i+BATCH_SIZE, newItems.length)} מתוך ${newItems.length})` : ''}:\n${newItemsJoined}`;
+                await telenode.sendTextMessage(msg, chatId);
+            }
         } else {
-            await telenode.sendTextMessage("לא נמצאו פריטים חדשים", chatId);
+            await telenode.sendTextMessage("נסרקו פריטים, אך לא נמצאו פריטים חדשים", chatId);
         }
     } catch (e) {
         let errMsg = e?.message || "";
