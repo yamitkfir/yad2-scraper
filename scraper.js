@@ -16,6 +16,7 @@ const getYad2Response = async (url) => {
     }
 }
 
+/*
 const scrapeItemsAndExtractImgUrls = async (url) => {
     const yad2Html = await getYad2Response(url);
     if (!yad2Html) {
@@ -39,7 +40,30 @@ const scrapeItemsAndExtractImgUrls = async (url) => {
         }
     })
     return imageUrls;
-}
+}*/
+const scrapeItemsAndExtractImgUrls = async (page) => {
+  const items = await page.evaluate(() => {
+    const itemElements = Array.from(document.querySelectorAll('.feeditem'));
+    return itemElements.map((el) => {
+      const id = el.getAttribute('post-id') || el.getAttribute('id');
+      const title = el.querySelector('.title')?.innerText || '';
+      const price = el.querySelector('.price')?.innerText || '';
+      const img = el.querySelector('img')?.src || '';
+      const link = el.querySelector('a')?.href || '';
+
+      return {
+        id: id || title + price, // fallback to something unique
+        title,
+        price,
+        img,
+        link
+      };
+    });
+  });
+
+  return items;
+};
+
 
 const checkIfHasNewItem = async (imgUrls, topic) => {
     const filePath = `./data/${topic}.json`;
@@ -85,15 +109,18 @@ const scrape = async (topic, url) => {
     const chatId = process.env.CHAT_ID || config.chatId;
     const telenode = new Telenode({apiToken})
     try {
-        await telenode.sendTextMessage(`Starting scanning ${topic} on link:\n${url}`, chatId)
-        const scrapeImgResults = await scrapeItemsAndExtractImgUrls(url);
-        const newItems = await checkIfHasNewItem(scrapeImgResults, topic);
+        //await telenode.sendTextMessage(`Starting scanning ${topic} on link:\n${url}`, chatId)
+        //const scrapeImgResults = await scrapeItemsAndExtractImgUrls(url);
+		const scrapedItems = await scrapeItemsAndExtractImgUrls(url);
+		const imgUrls = scrapedItems.map(item => item.id); // <-- use post IDs now
+        //const newItems = await checkIfHasNewItem(scrapeImgResults, topic);
+		const newItems = await checkIfHasNewItem(imgUrls, topic);
         if (newItems.length > 0) {
             const newItemsJoined = newItems.join("\n----------\n");
             const msg = `${newItems.length} new items:\n${newItemsJoined}`
             await telenode.sendTextMessage(msg, chatId);
         } else {
-            await telenode.sendTextMessage("No new items were added", chatId);
+            //await telenode.sendTextMessage("No new items were added", chatId);
         }
     } catch (e) {
         let errMsg = e?.message || "";
